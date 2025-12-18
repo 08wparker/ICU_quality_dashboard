@@ -1,0 +1,140 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+This is the CLIF ICU Quality Dashboard project (CLIF-IQR), designed to create a unit-level ICU quality report using the Common Longitudinal ICU data Format (CLIF) version 2.1. The dashboard tracks key ICU care metrics including adherence to low-tidal volume ventilation, spontaneous awakening trials (SAT), and spontaneous breathing trials (SBT).
+
+## Environment Setup
+
+### Python (Preferred Method)
+```bash
+uv init clif-icu-quality
+cd clif-icu-quality
+```
+
+Note: `uv` automatically creates virtual environments and manages dependencies. It generates required files like `uv.lock` for reproducible builds.
+
+### R Environment
+This project uses `renv` for R package management. The `renv.lock` file specifies all R dependencies. To restore the R environment:
+```r
+renv::restore()
+```
+
+## Configuration
+
+Before running any code:
+
+1. Copy the configuration template:
+   - Navigate to `config/` directory
+   - Rename `config_template.json` to `config.json`
+
+2. Update `config.json` with site-specific settings:
+   - `site_name`: Your site/institution name
+   - `tables_path`: Absolute path to your CLIF tables
+   - `file_type`: Format of your data files (`csv`, `parquet`, or `fst`)
+
+**Important**: `config.json` is git-ignored and will not be committed to the repository.
+
+## Code Execution Workflow
+
+The project follows a structured 4-step pipeline:
+
+### 1. Cohort Identification (`01_cohort_identification_template.py`)
+- Applies inclusion/exclusion criteria
+- Filters for adults (age >= 18) admitted during specified date range
+- Outputs:
+  - `cohort_ids`: List of unique `hospitalization_id` values
+  - `cohort_data`: Filtered study cohort data
+  - `cohort_summary`: Summary table describing the cohort
+
+### 2. Quality Control Checks (`02_project_quality_checks_template.py`)
+- Performs project-specific quality control on cohort data
+- Input: `cohort_data`
+- Output: Quality-checked data ready for outlier handling
+
+### 3. Outlier Handling (`03_outlier_handling_template.py`)
+- Replaces outliers with NA based on predefined thresholds in `outlier-thresholds/` directory
+- Available threshold files:
+  - `outlier_thresholds_adults_vitals.csv`
+  - `outlier_thresholds_labs.csv`
+  - `outlier_thresholds_respiratory_support.csv`
+- Input: Quality-checked data
+- Output: `cleaned_cohort_data`
+
+### 4. Analysis (`04_project_analysis_template.py`)
+- Main analysis code for generating quality metrics
+- Input: `cleaned_cohort_data`
+- Output: Statistical results, figures, and tables in `output/final/`
+
+## Project Architecture
+
+### Dual-Language Support
+The project supports both R and Python implementations:
+- **Python templates**: Located in `code/templates/Python/`
+- **R templates**: Referenced in `code/README.md` (templates directory currently removed)
+- **Utility modules**: Both `utils/config.py` and `utils/config.R` load the same JSON configuration
+
+### Configuration Loading
+- Python: `from utils import config` (uses `utils/config.py`)
+- R: `source("utils/config.R")` (uses jsonlite package)
+
+Both load from `config/config.json` and provide the same parameters.
+
+### Data I/O Functions
+
+**R** (`utils/outlier_handler.R`):
+- `read_data(filepath, filetype)`: Reads csv/parquet/fst files using data.table/arrow
+- `write_data(data, filepath, filetype)`: Writes data in specified format
+- `replace_outliers_with_na_long(df, df_outlier_thresholds, category_variable, numeric_variable)`: Replaces values outside thresholds with NA
+- `generate_summary_stats(data, category_variable, numeric_variable)`: Generates N, Min, Max, Mean, Median, and quartiles
+
+**Python** (`code/templates/Python/01_cohort_identification_template.py`):
+- `read_data(filepath, filetype)`: Reads csv/parquet files and reports load time and memory usage
+
+## Required CLIF Tables
+
+The dashboard requires these CLIF tables with specific fields:
+
+1. **patient**: `patient_id`, `race_category`, `ethnicity_category`, `sex_category`
+2. **hospitalization**: `patient_id`, `hospitalization_id`, `admission_dttm`, `discharge_dttm`, `age_at_admission`
+3. **vitals**: `hospitalization_id`, `recorded_dttm`, `vital_category`, `vital_value`
+   - Required categories: `heart_rate`, `resp_rate`, `sbp`, `dbp`, `map`, `spo2`
+4. **labs**: `hospitalization_id`, `lab_result_dttm`, `lab_category`, `lab_value`
+   - Required category: `lactate`
+5. **medication_admin_continuous**: `hospitalization_id`, `admin_dttm`, `med_name`, `med_category`, `med_dose`, `med_dose_unit`
+   - Required categories: vasopressors (norepinephrine, epinephrine, etc.), sedatives, paralytics
+6. **respiratory_support**: `hospitalization_id`, `recorded_dttm`, `device_category`, `mode_category`, `tracheostomy`, `fio2_set`, `lpm_set`, `resp_rate_set`, `peep_set`, `resp_rate_obs`
+
+See the [CLIF data dictionary](https://clif-consortium.github.io/website/data-dictionary.html) for complete specifications.
+
+## Key Quality Metrics (from specs.md)
+
+### Lung-Protective Ventilation (LPV)
+- Tidal volume ≤ 8 mL/kg PBW during invasive mechanical ventilation
+- Only in controlled modes: `Assist Control-Volume Control`, `Pressure Control`, `Pressure-Regulated Volume Control`
+- Calculated from respiratory_support table (hourly resolution)
+
+### Spontaneous Awakening Trials (SAT)
+- For patients on mechanical ventilation at 7 AM
+- Tracks: complete cessation of sedation, partial cessation, or dose reduction
+
+### Spontaneous Breathing Trials (SBT)
+- For patients in controlled mode at 7 AM
+- Tracks: switch to pressure support < 10 cmH2O, successful extubation (still extubated at 7 PM)
+
+## Output Structure
+
+- `output/intermediate/`: Intermediate cleaned data files
+- `output/final/`: Final analysis results, figures, and tables
+- Results are organized by data type (labs, vitals, etc.)
+
+## Expected Deliverable
+
+A Marimo app (interactive Python notebook) that runs locally in the browser, displaying:
+- Unit selection dropdown (`location_name`)
+- Reporting period selector (defaults to week)
+- Total admissions, daily census, discharges by disposition
+- Bed strain and SOFA-2 scores
+- Three-column layout for LPV, SAT, and SBT metrics
