@@ -37,13 +37,10 @@ A marimo app that runs locally in your browser
 Follow instructions in the [config/README.md](config/README.md) file for detailed configuration steps.
 
 ## 2. Set up the project environment
-*Describe the steps to setup the project environment.*
-
-**Preferred method using uv:**
 
 ```
-uv init clif-icu-quality
-cd clif-icu-quality
+cd path_to_file/ICU_quality_dashboard
+uv sync
 ```
 Note: uv automatically creates virtual environments and manages dependencies. It generates required files like `uv.lock` for reproducible builds. For more details, see the [CLIF uv guide by Zewei Whiskey Liao](https://github.com/Common-Longitudinal-ICU-data-Format/CLIF-data-huddles/blob/main/notes/uv-and-conv-commits.md).
 
