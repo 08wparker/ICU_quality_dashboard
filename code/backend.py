@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.10.12"
+__generated_with = "0.17.6"
 app = marimo.App(width="medium")
 
 
@@ -12,17 +12,15 @@ def _():
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
-        # SAT & SBT Analysis Pipeline
+    mo.md(r"""
+    # Dashboard Backline Data Pipeline
 
-        This notebook loads CLIF data and runs the SAT (Spontaneous Awakening Trial) and SBT (Spontaneous Breathing Trial) SQL scripts to generate event-level and day-level outputs.
+    This notebook loads CLIF data and runs the SAT (Spontaneous Awakening Trial) and SBT (Spontaneous Breathing Trial) SQL scripts to generate event-level and day-level outputs.
 
-        ## Data Sources
-        - **resp_p**: Waterfall-processed respiratory support (`output/intermediate/{site}_resp_processed_bf.parquet`)
-        - **CLIF tables**: Raw tables from the data directory specified in `config/config.json`
-        """
-    )
+    ## Data Sources
+    - **resp_p**: Waterfall-processed respiratory support (`output/intermediate/{site}_resp_processed_bf.parquet`)
+    - **CLIF tables**: Raw tables from the data directory specified in `config/config.json`
+    """)
     return
 
 
@@ -41,7 +39,7 @@ def _():
 
 
 @app.cell
-def _(json, os):
+def _(json):
     # Load configuration
     CONFIG_PATH = "config/config.json"
 
@@ -55,7 +53,7 @@ def _(json, os):
 
     print(f"Site: {SITE_NAME}")
     print(f"Data directory: {DATA_DIR}")
-    return CONFIG_PATH, DATA_DIR, FILETYPE, SITE_NAME, TIMEZONE, config
+    return DATA_DIR, SITE_NAME
 
 
 @app.cell
@@ -78,19 +76,43 @@ def _(Path):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(r"""## Load Base Tables""")
+    mo.md(r"""
+    ## Cohort
+    """)
     return
 
 
 @app.cell
-def _(DATA_DIR, SITE_NAME, pd):
+def _(duckdb, hosp_path, patient_path):
+    # subject to change once we define the cohort
+    _q = f"""
+    FROM '{patient_path}' p
+    LEFT JOIN '{hosp_path}' h USING (patient_id)
+    SELECT DISTINCT patient_id, hospitalization_id
+    """
+    cohort_ids_df = duckdb.sql(_q).df()
+    print(f"Loaded cohort_ids_df: {len(cohort_ids_df):,} rows")
+    cohort_ids_df.head()
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Load Base Tables
+    """)
+    return
+
+
+@app.cell
+def _(SITE_NAME, pd):
     # Load resp_p (waterfall-processed respiratory support)
     resp_p_path = f"output/intermediate/{SITE_NAME}_resp_processed_bf.parquet"
     resp_p = pd.read_parquet(resp_p_path)
     resp_p['tracheostomy'] = resp_p['tracheostomy'].fillna(0).astype(int)
     print(f"Loaded resp_p: {len(resp_p):,} rows")
     resp_p.head()
-    return resp_p, resp_p_path
+    return (resp_p,)
 
 
 @app.cell
@@ -110,21 +132,27 @@ def _(DATA_DIR, pd):
     adt_df = pd.read_parquet(adt_path)
     print(f"Loaded adt_df: {len(adt_df):,} rows")
     adt_df.head()
-    return adt_df, adt_path
-
-
-@app.cell
-def _(DATA_DIR, pd):
-    # Load code status table
-    cs_path = f"{DATA_DIR}/clif_code_status.parquet"
-    cs_df = pd.read_parquet(cs_path)
-    print(f"Loaded cs_df: {len(cs_df):,} rows")
-    cs_df.head()
-    return cs_df, cs_path
+    return (adt_df,)
 
 
 @app.cell
 def _(DATA_DIR, duckdb, pd):
+    # Load code status table
+    cs_path = f"{DATA_DIR}/clif_code_status.parquet"
+    cs_df = pd.read_parquet(cs_path)
+    _q = """
+    FROM cs_df
+    LEFT JOIN cohort_ids_df USING (patient_id)
+    SELECT hospitalization_id, start_dttm, code_status_category
+    """
+    cs_df = duckdb.sql(_q).df()
+    print(f"Loaded cs_df: {len(cs_df):,} rows")
+    cs_df.head()
+    return (cs_df,)
+
+
+@app.cell
+def _(DATA_DIR, duckdb):
     # Load vitals - get last vitals for each hospitalization (needed for SBT)
     vitals_path = f"{DATA_DIR}/clif_vitals.parquet"
     q = f"""
@@ -136,33 +164,35 @@ def _(DATA_DIR, duckdb, pd):
     last_vitals_df = duckdb.sql(q).df()
     print(f"Loaded last_vitals_df: {len(last_vitals_df):,} rows")
     last_vitals_df.head()
-    return last_vitals_df, q, vitals_path
+    return (last_vitals_df,)
 
 
 @app.cell
-def _(DATA_DIR, duckdb, pd):
+def _(DATA_DIR, duckdb):
     # Load patient assessments - filter to RASS only
     assessments_path = f"{DATA_DIR}/clif_patient_assessments.parquet"
     q_rass = f"""
     FROM '{assessments_path}'
-    WHERE LOWER(assessment_category) = 'rass'
     SELECT hospitalization_id, recorded_dttm
-        , rass: assessment_value::FLOAT
+        , rass: numerical_value::FLOAT
+    WHERE LOWER(assessment_category) = 'rass'
     """
     rass_df = duckdb.sql(q_rass).df()
     print(f"Loaded rass_df: {len(rass_df):,} rows")
     rass_df.head()
-    return assessments_path, q_rass, rass_df
+    return (rass_df,)
 
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(r"""## Load and Pivot Medications (Wide Format)""")
+    mo.md(r"""
+    ## Load and Pivot Medications (Wide Format)
+    """)
     return
 
 
 @app.cell
-def _(DATA_DIR, duckdb, pd):
+def _(DATA_DIR, duckdb):
     # Load continuous medications and pivot to wide format
     meds_path = f"{DATA_DIR}/clif_medication_admin_continuous.parquet"
 
@@ -174,11 +204,11 @@ def _(DATA_DIR, duckdb, pd):
     q_meds = f"""
     WITH filtered AS (
         FROM '{meds_path}'
-        WHERE LOWER(med_category) IN ({', '.join([f"'{m}'" for m in all_meds])})
         SELECT hospitalization_id
             , admin_dttm AS recorded_dttm
             , LOWER(med_category) AS med_category
             , med_dose
+        WHERE LOWER(med_category) IN ({', '.join([f"'{m}'" for m in all_meds])})
     )
     PIVOT filtered
     ON med_category
@@ -189,22 +219,20 @@ def _(DATA_DIR, duckdb, pd):
     print(f"Loaded meds_df (pivoted wide): {len(meds_df):,} rows")
     print(f"Columns: {list(meds_df.columns)}")
     meds_df.head()
-    return all_meds, meds_df, meds_path, paralytic_meds, q_meds, sedation_meds
+    return (meds_df,)
 
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
-        ## Run SBT SQL Script
+    mo.md(r"""
+    ## Run SBT SQL Script
 
-        The SBT script requires:
-        - `resp_p`: Waterfall-processed respiratory support
-        - `cs_df`: Code status table
-        - `hosp_df`: Hospitalization table
-        - `last_vitals_df`: Last vitals timestamp per hospitalization
-        """
-    )
+    The SBT script requires:
+    - `resp_p`: Waterfall-processed respiratory support
+    - `cs_df`: Code status table
+    - `hosp_df`: Hospitalization table
+    - `last_vitals_df`: Last vitals timestamp per hospitalization
+    """)
     return
 
 
@@ -221,11 +249,11 @@ def _(cs_df, duckdb, hosp_df, last_vitals_df, resp_p, run_query_from_file):
     sbt_events = sbt_result.df()
     print(f"SBT events: {len(sbt_events):,} rows")
     sbt_events.head()
-    return sbt_events, sbt_result
+    return (sbt_events,)
 
 
 @app.cell
-def _(duckdb, sbt_events):
+def _(duckdb):
     # Aggregate SBT to day level
     q_sbt_daily = """
     FROM sbt_events
@@ -244,22 +272,20 @@ def _(duckdb, sbt_events):
     sbt_days = duckdb.sql(q_sbt_daily).df()
     print(f"SBT days: {len(sbt_days):,} rows")
     sbt_days.head()
-    return q_sbt_daily, sbt_days
+    return
 
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
-        ## Run SAT SQL Script
+    mo.md(r"""
+    ## Run SAT SQL Script
 
-        The SAT script requires:
-        - `resp_df`: Respiratory support (using resp_p)
-        - `meds_df`: Pivoted wide medications table
-        - `rass_df`: RASS assessments
-        - `adt_df`: ADT with location_category
-        """
-    )
+    The SAT script requires:
+    - `resp_df`: Respiratory support (using resp_p)
+    - `meds_df`: Pivoted wide medications table
+    - `rass_df`: RASS assessments
+    - `adt_df`: ADT with location_category
+    """)
     return
 
 
@@ -276,17 +302,19 @@ def _(adt_df, duckdb, meds_df, rass_df, resp_p, run_query_from_file):
     sat_days = sat_result.df()
     print(f"SAT days (eligible): {len(sat_days):,} rows")
     sat_days.head()
-    return sat_days, sat_result
+    return (sat_days,)
 
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(r"""## Summary Statistics""")
+    mo.md(r"""
+    ## Summary Statistics
+    """)
     return
 
 
 @app.cell
-def _(duckdb, sat_days, sbt_days):
+def _(duckdb):
     # Join SAT and SBT day-level results
     q_merged = """
     FROM sbt_days sbt
@@ -304,7 +332,7 @@ def _(duckdb, sat_days, sbt_days):
     merged_days = duckdb.sql(q_merged).df()
     print(f"Merged day-level data: {len(merged_days):,} rows")
     merged_days.head()
-    return merged_days, q_merged
+    return (merged_days,)
 
 
 @app.cell
@@ -328,11 +356,11 @@ def _(merged_days, mo):
     |--------|-------|
     {"".join([f"| {k} | {v} |" + chr(10) for k, v in stats.items()])}
     """)
-    return (stats,)
+    return
 
 
 @app.cell
-def _(SITE_NAME, merged_days, os, sbt_events, sat_days):
+def _(SITE_NAME, merged_days, os, sat_days, sbt_events):
     # Save outputs
     os.makedirs("output/intermediate", exist_ok=True)
 
@@ -346,12 +374,14 @@ def _(SITE_NAME, merged_days, os, sbt_events, sat_days):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(r"""## Data Quality Checks""")
+    mo.md(r"""
+    ## Data Quality Checks
+    """)
     return
 
 
 @app.cell
-def _(duckdb, merged_days):
+def _(duckdb):
     # Check SAT flag distributions
     q_sat_flags = """
     SELECT
@@ -367,11 +397,11 @@ def _(duckdb, merged_days):
     """
     sat_summary = duckdb.sql(q_sat_flags).df()
     sat_summary.T
-    return q_sat_flags, sat_summary
+    return
 
 
 @app.cell
-def _(duckdb, merged_days):
+def _(duckdb):
     # Check SBT and extubation outcomes
     q_sbt_outcomes = """
     SELECT
@@ -385,26 +415,24 @@ def _(duckdb, merged_days):
     """
     sbt_summary = duckdb.sql(q_sbt_outcomes).df()
     sbt_summary.T
-    return q_sbt_outcomes, sbt_summary
+    return
 
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
-        ## Low Tidal Volume Ventilation Analysis
+    mo.md(r"""
+    ## Low Tidal Volume Ventilation Analysis
 
-        Calculate the proportion of controlled-mode ventilator hours using low tidal volume (< 8 cc/kg IBW).
+    Calculate the proportion of controlled-mode ventilator hours using low tidal volume (< 8 cc/kg IBW).
 
-        **Controlled modes:** Assist Control-Volume Control, Pressure Control, Pressure-Regulated Volume Control
+    **Controlled modes:** Assist Control-Volume Control, Pressure Control, Pressure-Regulated Volume Control
 
-        **IBW (Ideal Body Weight) formulas:**
-        - Female: IBW = 45.5 + 0.9 × (height_cm - 152)
-        - Male: IBW = 50 + 0.9 × (height_cm - 152)
+    **IBW (Ideal Body Weight) formulas:**
+    - Female: IBW = 45.5 + 0.9 × (height_cm - 152)
+    - Male: IBW = 50 + 0.9 × (height_cm - 152)
 
-        **Low tidal volume:** tidal_volume_set / IBW < 8 cc/kg
-        """
-    )
+    **Low tidal volume:** tidal_volume_set / IBW < 8 cc/kg
+    """)
     return
 
 
@@ -419,7 +447,7 @@ def _(DATA_DIR, duckdb):
     patient_df = duckdb.sql(q_patient).df()
     print(f"Loaded patient_df: {len(patient_df):,} rows")
     patient_df.head()
-    return patient_df, patient_path, q_patient
+    return patient_df, patient_path
 
 
 @app.cell
@@ -430,9 +458,10 @@ def _(DATA_DIR, duckdb):
     q_height = f"""
     WITH height_vitals AS (
         FROM '{vitals_path_height}'
+        SELECT hospitalization_id, recorded_dttm, vital_value AS height_cm
         WHERE LOWER(vital_category) = 'height_cm'
             AND vital_value IS NOT NULL
-        SELECT hospitalization_id, recorded_dttm, vital_value AS height_cm
+
     )
     SELECT hospitalization_id
         , height_cm
@@ -442,11 +471,11 @@ def _(DATA_DIR, duckdb):
     height_df = duckdb.sql(q_height).df()
     print(f"Loaded height_df: {len(height_df):,} rows")
     height_df.head()
-    return height_df, q_height, vitals_path_height
+    return (height_df,)
 
 
 @app.cell
-def _(duckdb, height_df, hosp_df, patient_df, resp_p):
+def _(duckdb, height_df, patient_df):
     # Join patient sex with hospitalization to get sex per hospitalization_id
     # Then join with height to compute IBW
     duckdb.register("patient_df", patient_df)
@@ -485,11 +514,11 @@ def _(duckdb, height_df, hosp_df, patient_df, resp_p):
     print(f"Computed IBW for {len(ibw_df):,} hospitalizations")
     print(f"IBW stats:\n{ibw_df['ibw_kg'].describe()}")
     ibw_df.head()
-    return ibw_df, q_ibw
+    return (ibw_df,)
 
 
 @app.cell
-def _(duckdb, ibw_df, resp_p):
+def _(duckdb, ibw_df):
     # Calculate low tidal volume proportion
     # Denominator: IMV hours on controlled mode
     # Numerator: IMV hours on controlled mode with tidal_volume_set/IBW < 8 cc/kg
@@ -520,8 +549,6 @@ def _(duckdb, ibw_df, resp_p):
     , controlled_mode_hours AS (
         -- Filter to IMV on controlled modes
         FROM resp_with_ibw
-        WHERE LOWER(device_category) = 'imv'
-            AND LOWER(mode_category) IN ({', '.join([f"'{m}'" for m in controlled_modes])})
         SELECT *
             -- Calculate tidal volume in cc/kg
             , tidal_volume_set / NULLIF(ibw_kg, 0) AS tv_cc_per_kg
@@ -532,6 +559,8 @@ def _(duckdb, ibw_df, resp_p):
                 THEN 1
                 ELSE 0
               END AS is_low_tv
+        WHERE LOWER(device_category) = 'imv'
+            AND LOWER(mode_category) IN ({', '.join([f"'{m}'" for m in controlled_modes])})
     )
     SELECT
         -- Total controlled mode hours (denominator)
@@ -547,11 +576,11 @@ def _(duckdb, ibw_df, resp_p):
     ltv_summary = duckdb.sql(q_ltv).df()
     print("Low Tidal Volume Summary:")
     ltv_summary
-    return controlled_modes, ltv_summary, q_ltv
+    return controlled_modes, ltv_summary
 
 
 @app.cell
-def _(duckdb, ibw_df, resp_p, controlled_modes):
+def _(controlled_modes, duckdb):
     # Detailed breakdown by mode category
     q_ltv_by_mode = f"""
     WITH resp_with_ibw AS (
@@ -566,8 +595,6 @@ def _(duckdb, ibw_df, resp_p, controlled_modes):
     )
     , controlled_mode_hours AS (
         FROM resp_with_ibw
-        WHERE LOWER(device_category) = 'imv'
-            AND LOWER(mode_category) IN ({', '.join([f"'{m}'" for m in controlled_modes])})
         SELECT *
             , tidal_volume_set / NULLIF(ibw_kg, 0) AS tv_cc_per_kg
             , CASE
@@ -576,6 +603,8 @@ def _(duckdb, ibw_df, resp_p, controlled_modes):
                 THEN 1
                 ELSE 0
               END AS is_low_tv
+        WHERE LOWER(device_category) = 'imv'
+            AND LOWER(mode_category) IN ({', '.join([f"'{m}'" for m in controlled_modes])})
     )
     SELECT
         mode_category,
@@ -590,7 +619,7 @@ def _(duckdb, ibw_df, resp_p, controlled_modes):
     ltv_by_mode = duckdb.sql(q_ltv_by_mode).df()
     print("Low Tidal Volume by Mode:")
     ltv_by_mode
-    return ltv_by_mode, q_ltv_by_mode
+    return
 
 
 @app.cell
@@ -614,7 +643,7 @@ def _(ltv_summary, mo):
     *Note: Each row represents one respiratory support measurement. For hourly analysis,
     data should be aggregated to hourly intervals.*
     """)
-    return low_tv_pct, low_tv_rows, total_rows, valid_rows
+    return
 
 
 if __name__ == "__main__":
