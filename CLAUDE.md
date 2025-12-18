@@ -22,6 +22,42 @@ This project uses `renv` for R package management. The `renv.lock` file specifie
 renv::restore()
 ```
 
+## CLIF Schema and Skills
+
+This project uses the **clif-icu** skill plugin to access official CLIF schemas and documentation.
+
+### Accessing CLIF Schemas
+
+Use the clif-icu skill to get table schemas:
+
+```python
+from clif_icu import schema
+
+# Get table schema
+adt_schema = schema.get_table_schema('adt')
+hosp_schema = schema.get_table_schema('hospitalization')
+```
+
+### Key CLIF Tables for This Project
+
+**ADT Table** (Admission/Discharge/Transfer):
+- Composite keys: `hospitalization_id` + `in_dttm`
+- Key columns: `location_name`, `location_category` (icu/ward/stepdown/etc.), `location_type`, `in_dttm`, `out_dttm`
+- Use for: ICU census, admissions, transfers, length of stay
+
+**Hospitalization Table**:
+- Primary key: `hospitalization_id`
+- Key columns: `admission_dttm`, `discharge_dttm`, `discharge_category`, `age_at_admission`
+- Discharge categories: `Expired`, `Hospice`, `Skilled Nursing Facility (SNF)`, `Long Term Care Hospital (LTACH)`, `Acute Inpatient Rehab Facility`, `Home`, etc.
+- Use for: Hospital discharge disposition, overall hospitalization metrics
+
+### Important: CLIF Discharge Information
+
+Discharge disposition is **NOT** in the ADT table. To get discharge information:
+1. Merge ADT data with hospitalization table on `hospitalization_id`
+2. Use `discharge_category` from hospitalization table
+3. Check `discharge_dttm` to match timing
+
 ## Configuration
 
 Before running any code:
@@ -130,11 +166,54 @@ See the [CLIF data dictionary](https://clif-consortium.github.io/website/data-di
 - `output/final/`: Final analysis results, figures, and tables
 - Results are organized by data type (labs, vitals, etc.)
 
+## Dashboard Implementation (code/app.py)
+
+The main dashboard is implemented as a Marimo app (`code/app.py`) that provides an interactive interface.
+
+### Key Features
+
+1. **Dynamic ICU Location Selection**: Queries ADT table to get all ICU locations (where `location_category='icu'`)
+2. **Date Range Picker**: Automatically sets min/max dates based on available data in ADT table
+3. **Overall Summary Calculation**: Generates day-level metrics for selected location and date range
+
+### Day Definition
+
+**Important**: A "day" is defined as 7 AM to 7 AM the following day (not midnight to midnight). This aligns with typical ICU shift patterns and clinical workflows.
+
+- Day start: 7:00 AM on the selected date
+- Day end: 7:00 AM the next day (exclusive)
+- Census snapshots: 7 AM and 7 PM on the selected date
+
+### Data Flow in app.py
+
+1. **Load Configuration**: Read `config/config.json` for database paths
+2. **Load Tables**: Load ADT and Hospitalization tables with datetime conversion
+3. **Handle Timezones**: Detect timezone from ADT data and localize comparison timestamps to avoid timezone comparison errors
+4. **Get ICU Locations**: Filter ADT for `location_category='icu'` and populate dropdown
+5. **Calculate Summary**: For each day in selected range (7 AM to 7 AM):
+   - **total_admissions**: Count of `in_dttm` to ICU within the day window
+   - **census_7AM/7PM**: Count of patients present in ICU at 7 AM/7 PM
+   - **total_discharges**: Count of `out_dttm` from ICU within the day window
+   - **floor_transfers**: ICU discharges where next ADT location is ward/stepdown
+   - **deaths_in_icu**: ICU discharges where `discharge_category='Expired'`
+   - **discharges_to_hospice**: ICU discharges where `discharge_category='Hospice'`
+   - **discharges_to_facility**: ICU discharges to SNF/LTACH/Rehab/Assisted Living
+
+### Running the Dashboard
+
+```bash
+cd code
+marimo edit app.py
+```
+
+The app will open in your browser with interactive controls.
+
 ## Expected Deliverable
 
 A Marimo app (interactive Python notebook) that runs locally in the browser, displaying:
-- Unit selection dropdown (`location_name`)
-- Reporting period selector (defaults to week)
+- Unit selection dropdown (dynamically populated from ICU locations)
+- Reporting period selector (constrained to available data dates)
+- Day-level overall summary dataframe
 - Total admissions, daily census, discharges by disposition
-- Bed strain and SOFA-2 scores
-- Three-column layout for LPV, SAT, and SBT metrics
+- Bed strain and SOFA-2 scores (to be implemented)
+- Three-column layout for LPV, SAT, and SBT metrics (to be implemented)
