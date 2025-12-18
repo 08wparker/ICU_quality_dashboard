@@ -1,0 +1,7 @@
+location_name,day,total_IMV_patients_7AM,sat_complete_cessation_N_7AM_7PM,sat_sedation_cessation_N_7AM_7PM,sat_dose_reduction_N_7AM_7PM
+ICU-1,1/1/25,10,9,4,3
+ICU-2,1/1/25,4,4,4,4
+ICU-3,1/1/25,6,4,0,0
+MICU,1/1/25,15,13,7,6
+SICU,1/1/25,7,3,2,2
+CCU,1/1/25,4,4,4,4

@@ -1,0 +1,13 @@
+location_name,day,total_IMV_patients_7AM,sbt_pressure_support_7AM_7PM_N,any_extubation_7AM_7PM,sbt_successful_extubation_7PM_N
+ICU-1,1/1/25,10,9,4,3
+ICU-2,1/1/25,4,4,4,4
+ICU-3,1/1/25,6,4,0,0
+MICU,1/1/25,15,13,7,6
+SICU,1/1/25,7,3,2,2
+CCU,1/1/25,4,4,4,4
+ICU-1,1/2/25,,,,
+ICU-2,1/2/25,,,,
+ICU-3,1/2/25,,,,
+MICU,1/2/25,,,,
+SICU,1/2/25,,,,
+CCU,1/2/25,,,,

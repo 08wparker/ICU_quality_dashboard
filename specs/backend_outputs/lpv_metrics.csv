@@ -1,0 +1,7 @@
+location_name,day,total_controlled_IMV_hours,TV_less_8_cc_kg_IBW
+ICU-1,1/1/25,200,190
+ICU-2,1/1/25,50,30
+ICU-3,1/1/25,79,72
+MICU,1/1/25,150,140
+SICU,1/1/25,80,75
+CCU,1/1/25,50,40
