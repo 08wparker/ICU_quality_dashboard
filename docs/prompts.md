@@ -12,3 +12,57 @@ let's rename code/sat_sbt_analysis.py to code/backend.py. in there add cells to 
 - tv_in_cc_per_kg = tv_in_ml divided by IBW (ideal body weight in kg) where 
 - for sex_category = 'Female', IBW = 45.5 + 0.9 × (height_cm - 152)
 - for sex_category = 'Male', IBW = 50 + 0.9 × (height_cm - 152)
+
+-----
+
+You are a clinical informatics expert with programming expertise. use your clif-icu skill to update code/backend.py; code/sat.sql; code/sbt.sql scripts with the goal of better defining the cohort and revising the metrics calculations and expected output schema. In the marimo notebook, only add new cells when necessary; otherwise prioritize modifying existing cells -- in either case, make sure revision or addition of cells are performed under the correct relevant section of the marimo notebook and NOT misplaced in wrong location. Same applies to the sql scripts where existing CTEs can be modified or deleted if deemed irrelevant.
+
+Recall that we want to calculate 3 metrics as an output of the backend.py which will be served to the front-end dashboard: 1. LPV, 2. SAT, 3. SBT. You can delete any irrelevant and now-outdated flags.
+
+## User-defined cohort
+
+Users are allowed to choose start_date, end_date, location (adt.location_name) as parameters in the UI. Thus our backend should be able to take in these 3 parameters to filter the data to a much smaller cohort on which any subsequent metrics will be calculated. That said, make sure when the backend first load the data, we directly apply filtering during import to only load the subset of data defined by time and location.
+
+## SAT
+
+Cohort: All patients receiving invasive mechanical ventilation (respiratory_support.device_category = 'imv') in an ICU (adt.location_category = 'icu') at 7 AM per day. Note that this is effectively the new eligibility criteria and only patients satisfying this criteria on that patient-day will be kept in the dataset and their metrics will be calculated.
+
+Metrics: Note that all of the finalized metrics below are slightly modified versions of the original flags with the additional universal requirement that the flag must occur within the 7 AM to 7 PM window on that patient-day.
+- sat_complete_cessation_N_7AM_7PM: Complete cessation of all analgesia and sedation = equivalent to the original `SAT_EHR_delivery` flag 
+- sat_sedation_cessation_N_7AM_7PM: Cessation of sedation (stop propofol and benzodiazepine drips) = similar to the original `SAT_modified_delivery` flag
+- sat_dose_reduction_N_7AM_7PM: Dose reduction of sedation = similar to the original `SAT_med_halved_rass_pos` flag but without the rass condition.
+
+Output schema to STRICTLY FOLLOW: 
+| Output path | Reference output schema |
+|--------|-------|
+| output/intermediate/sat_metrics.csv | specs/backend_outputs/sat_metrics_intermediate.csv |
+| output/final/sat_metrics.csv | specs/backend_outputs/sat_metrics_final.csv |
+
+### SBT
+
+Cohort: All patients receiving a controlled mode (respiratory_support.mode_category IN ('Assist Control-Volume Control', 'Pressure Control', 'Pressure-Regulated Volume Control')) of invasive mechanical ventilation (respiratory_support.device_category = 'imv') in an ICU (adt.location_category = 'icu') at 7 AM per day. Note that this is effectively the new eligibility criteria and only patients satisfying this criteria on that patient-day will be kept in the dataset and their metrics will be calculated.
+
+Metrics: Note that all of the finalized metrics below are slightly modified versions of the original flags with the additional universal requirement that the flag must occur within the 7 AM to 7 PM window on that patient-day.
+- sbt_pressure_support_7AM_7PM: identical to the original `sbt_done` flag.
+- any_extubation_7AM_7PM: similar to the original `_extub_1st` flag but do not need it to be the first extubation -- can be any extubation within the 7 AM to 7 PM window during that patient-day.
+- sbt_successful_extubation_7PM: similar to the original `_success_extub` flag but with the additional condition that the patient remains extubated at 7 PM.
+
+Output schema to STRICTLY FOLLOW: 
+| Output path | Reference output schema |
+|--------|-------|
+| output/intermediate/sbt_metrics.csv | specs/backend_outputs/sbt_metrics_intermediate.csv |
+| output/final/sbt_metrics.csv | specs/backend_outputs/sbt_metrics_final.csv |
+
+### LPV
+
+Cohort: All patients receiving a controlled mode (respiratory_support.mode_category IN ('Assist Control-Volume Control', 'Pressure Control', 'Pressure-Regulated Volume Control')) of invasive mechanical ventilation (respiratory_support.device_category = 'imv') in an ICU (adt.location_category = 'icu') at 7 AM per day.
+
+Metrics: 
+- total_controlled_IMV_hours: the original denominator
+- ltv_hours: the original numerator
+
+Output schema to STRICTLY FOLLOW: 
+| Output path | Reference output schema |
+|--------|-------|
+| output/intermediate/lpv_metrics.csv | specs/backend_outputs/lpv_metrics_intermediate.csv |
+| output/final/lpv_metrics.csv | specs/backend_outputs/lpv_metrics_final.csv |
