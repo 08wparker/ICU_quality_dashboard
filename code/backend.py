@@ -388,5 +388,234 @@ def _(duckdb, merged_days):
     return q_sbt_outcomes, sbt_summary
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(
+        r"""
+        ## Low Tidal Volume Ventilation Analysis
+
+        Calculate the proportion of controlled-mode ventilator hours using low tidal volume (< 8 cc/kg IBW).
+
+        **Controlled modes:** Assist Control-Volume Control, Pressure Control, Pressure-Regulated Volume Control
+
+        **IBW (Ideal Body Weight) formulas:**
+        - Female: IBW = 45.5 + 0.9 × (height_cm - 152)
+        - Male: IBW = 50 + 0.9 × (height_cm - 152)
+
+        **Low tidal volume:** tidal_volume_set / IBW < 8 cc/kg
+        """
+    )
+    return
+
+
+@app.cell
+def _(DATA_DIR, duckdb):
+    # Load patient table for sex_category
+    patient_path = f"{DATA_DIR}/clif_patient.parquet"
+    q_patient = f"""
+    FROM '{patient_path}'
+    SELECT patient_id, sex_category
+    """
+    patient_df = duckdb.sql(q_patient).df()
+    print(f"Loaded patient_df: {len(patient_df):,} rows")
+    patient_df.head()
+    return patient_df, patient_path, q_patient
+
+
+@app.cell
+def _(DATA_DIR, duckdb):
+    # Load height from vitals table (vital_category = 'height_cm')
+    # Get the most recent height for each hospitalization
+    vitals_path_height = f"{DATA_DIR}/clif_vitals.parquet"
+    q_height = f"""
+    WITH height_vitals AS (
+        FROM '{vitals_path_height}'
+        WHERE LOWER(vital_category) = 'height_cm'
+            AND vital_value IS NOT NULL
+        SELECT hospitalization_id, recorded_dttm, vital_value AS height_cm
+    )
+    SELECT hospitalization_id
+        , height_cm
+    FROM height_vitals
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY hospitalization_id ORDER BY recorded_dttm DESC) = 1
+    """
+    height_df = duckdb.sql(q_height).df()
+    print(f"Loaded height_df: {len(height_df):,} rows")
+    height_df.head()
+    return height_df, q_height, vitals_path_height
+
+
+@app.cell
+def _(duckdb, height_df, hosp_df, patient_df, resp_p):
+    # Join patient sex with hospitalization to get sex per hospitalization_id
+    # Then join with height to compute IBW
+    duckdb.register("patient_df", patient_df)
+    duckdb.register("height_df", height_df)
+
+    q_ibw = """
+    WITH hosp_patient AS (
+        -- Join hospitalization with patient to get sex_category per hospitalization
+        FROM hosp_df h
+        LEFT JOIN patient_df p USING (patient_id)
+        SELECT h.hospitalization_id, p.sex_category
+    )
+    , hosp_with_height AS (
+        -- Join with height
+        FROM hosp_patient hp
+        LEFT JOIN height_df ht USING (hospitalization_id)
+        SELECT hp.hospitalization_id
+            , hp.sex_category
+            , ht.height_cm
+    )
+    SELECT hospitalization_id
+        , sex_category
+        , height_cm
+        -- Calculate IBW based on sex
+        -- Female: IBW = 45.5 + 0.9 × (height_cm - 152)
+        -- Male: IBW = 50 + 0.9 × (height_cm - 152)
+        , CASE
+            WHEN LOWER(sex_category) = 'female' THEN 45.5 + 0.9 * (height_cm - 152)
+            WHEN LOWER(sex_category) = 'male' THEN 50.0 + 0.9 * (height_cm - 152)
+            ELSE NULL
+          END AS ibw_kg
+    FROM hosp_with_height
+    WHERE height_cm IS NOT NULL
+    """
+    ibw_df = duckdb.sql(q_ibw).df()
+    print(f"Computed IBW for {len(ibw_df):,} hospitalizations")
+    print(f"IBW stats:\n{ibw_df['ibw_kg'].describe()}")
+    ibw_df.head()
+    return ibw_df, q_ibw
+
+
+@app.cell
+def _(duckdb, ibw_df, resp_p):
+    # Calculate low tidal volume proportion
+    # Denominator: IMV hours on controlled mode
+    # Numerator: IMV hours on controlled mode with tidal_volume_set/IBW < 8 cc/kg
+
+    # Controlled modes (case-insensitive matching)
+    controlled_modes = [
+        'assist control-volume control',
+        'pressure control',
+        'pressure-regulated volume control'
+    ]
+
+    duckdb.register("ibw_df", ibw_df)
+
+    q_ltv = f"""
+    WITH resp_with_ibw AS (
+        -- Join respiratory data with IBW
+        FROM resp_p r
+        LEFT JOIN ibw_df i USING (hospitalization_id)
+        SELECT r.hospitalization_id
+            , r.recorded_dttm
+            , r.device_category
+            , r.mode_category
+            , r.tidal_volume_set
+            , i.ibw_kg
+            , i.sex_category
+            , i.height_cm
+    )
+    , controlled_mode_hours AS (
+        -- Filter to IMV on controlled modes
+        FROM resp_with_ibw
+        WHERE LOWER(device_category) = 'imv'
+            AND LOWER(mode_category) IN ({', '.join([f"'{m}'" for m in controlled_modes])})
+        SELECT *
+            -- Calculate tidal volume in cc/kg
+            , tidal_volume_set / NULLIF(ibw_kg, 0) AS tv_cc_per_kg
+            -- Flag for low tidal volume (< 8 cc/kg)
+            , CASE
+                WHEN ibw_kg IS NOT NULL AND tidal_volume_set IS NOT NULL
+                    AND (tidal_volume_set / ibw_kg) < 8
+                THEN 1
+                ELSE 0
+              END AS is_low_tv
+    )
+    SELECT
+        -- Total controlled mode hours (denominator)
+        COUNT(*) AS total_controlled_mode_rows,
+        -- Rows with valid IBW and TV for calculation
+        SUM(CASE WHEN ibw_kg IS NOT NULL AND tidal_volume_set IS NOT NULL THEN 1 ELSE 0 END) AS rows_with_valid_data,
+        -- Low tidal volume hours (numerator)
+        SUM(is_low_tv) AS low_tv_rows,
+        -- Percentage
+        ROUND(100.0 * SUM(is_low_tv) / NULLIF(SUM(CASE WHEN ibw_kg IS NOT NULL AND tidal_volume_set IS NOT NULL THEN 1 ELSE 0 END), 0), 1) AS low_tv_percentage
+    FROM controlled_mode_hours
+    """
+    ltv_summary = duckdb.sql(q_ltv).df()
+    print("Low Tidal Volume Summary:")
+    ltv_summary
+    return controlled_modes, ltv_summary, q_ltv
+
+
+@app.cell
+def _(duckdb, ibw_df, resp_p, controlled_modes):
+    # Detailed breakdown by mode category
+    q_ltv_by_mode = f"""
+    WITH resp_with_ibw AS (
+        FROM resp_p r
+        LEFT JOIN ibw_df i USING (hospitalization_id)
+        SELECT r.hospitalization_id
+            , r.recorded_dttm
+            , r.device_category
+            , r.mode_category
+            , r.tidal_volume_set
+            , i.ibw_kg
+    )
+    , controlled_mode_hours AS (
+        FROM resp_with_ibw
+        WHERE LOWER(device_category) = 'imv'
+            AND LOWER(mode_category) IN ({', '.join([f"'{m}'" for m in controlled_modes])})
+        SELECT *
+            , tidal_volume_set / NULLIF(ibw_kg, 0) AS tv_cc_per_kg
+            , CASE
+                WHEN ibw_kg IS NOT NULL AND tidal_volume_set IS NOT NULL
+                    AND (tidal_volume_set / ibw_kg) < 8
+                THEN 1
+                ELSE 0
+              END AS is_low_tv
+    )
+    SELECT
+        mode_category,
+        COUNT(*) AS total_rows,
+        SUM(CASE WHEN ibw_kg IS NOT NULL AND tidal_volume_set IS NOT NULL THEN 1 ELSE 0 END) AS valid_rows,
+        SUM(is_low_tv) AS low_tv_rows,
+        ROUND(100.0 * SUM(is_low_tv) / NULLIF(SUM(CASE WHEN ibw_kg IS NOT NULL AND tidal_volume_set IS NOT NULL THEN 1 ELSE 0 END), 0), 1) AS low_tv_pct
+    FROM controlled_mode_hours
+    GROUP BY mode_category
+    ORDER BY total_rows DESC
+    """
+    ltv_by_mode = duckdb.sql(q_ltv_by_mode).df()
+    print("Low Tidal Volume by Mode:")
+    ltv_by_mode
+    return ltv_by_mode, q_ltv_by_mode
+
+
+@app.cell
+def _(ltv_summary, mo):
+    # Display summary
+    total_rows = ltv_summary['total_controlled_mode_rows'].iloc[0]
+    valid_rows = ltv_summary['rows_with_valid_data'].iloc[0]
+    low_tv_rows = ltv_summary['low_tv_rows'].iloc[0]
+    low_tv_pct = ltv_summary['low_tv_percentage'].iloc[0]
+
+    mo.md(f"""
+    ### Low Tidal Volume Ventilation Results
+
+    | Metric | Value |
+    |--------|-------|
+    | Total controlled-mode ventilator rows | {total_rows:,} |
+    | Rows with valid IBW and TV data | {valid_rows:,} |
+    | Rows with low tidal volume (< 8 cc/kg) | {low_tv_rows:,} |
+    | **Low tidal volume percentage** | **{low_tv_pct}%** |
+
+    *Note: Each row represents one respiratory support measurement. For hourly analysis,
+    data should be aggregated to hourly intervals.*
+    """)
+    return low_tv_pct, low_tv_rows, total_rows, valid_rows
+
+
 if __name__ == "__main__":
     app.run()
