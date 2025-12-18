@@ -1,19 +1,9 @@
 output/
 
-# R specific gitignores
-.Rprofile
-.Rhistory
-.Rprofile
-.Ruserdata
 .DS_Store
-*.Rproj
-.Rproj.user
 
-## ignore the renv initialization file
-initialize_renv.R
-
-## ignore filtered CLIF tables stored as Rdata
-*.RData
+#Ignore config file
+config.json
 
 #ignore source CLIF_ files 
 CLIF_*.parquet
