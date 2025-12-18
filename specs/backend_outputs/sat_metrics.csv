@@ -1,7 +1,7 @@
-location_name,start,stop,sat_complete_cessation_pct,sat_sedation_cessation_pct,sat_dose_reduction_pct
-ICU-1,2025-01-01,2025-01-07,34.2,52.8,23.5
-ICU-2,2025-01-01,2025-01-07,38.5,48.3,28.1
-ICU-3,2025-01-01,2025-01-07,31.7,55.2,21.8
-MICU,2025-01-01,2025-01-07,36.9,50.4,25.3
-SICU,2025-01-01,2025-01-07,42.1,46.7,30.2
-CCU,2025-01-01,2025-01-07,29.4,58.1,19.6
+location_name,day,total_IMV_patients_7AM,sat_complete_cessation_N_7AM_7PM,sat_sedation_cessation_N_7AM_7PM,sat_dose_reduction_N_7AM_7PM
+ICU-1,1/1/25,10,9,4,3
+ICU-2,1/1/25,4,4,4,4
+ICU-3,1/1/25,6,4,0,0
+MICU,1/1/25,15,13,7,6
+SICU,1/1/25,7,3,2,2
+CCU,1/1/25,4,4,4,4
