@@ -1,0 +1,7 @@
+location_name,location_category,location_type,start,stop,total_admissions,daily_census,total_discharges,floor_transfers,deaths_in_icu,discharges_to_hospice,discharges_to_facility,bed_strain_pct,sofa_median,sofa_q1,sofa_q3
+ICU-1,Adult,Medical,2025-01-01,2025-01-07,156,23,142,98,18,12,14,87.3,6,4,9
+ICU-2,Adult,Surgical,2025-01-01,2025-01-07,142,21,135,92,15,10,18,82.5,5,3,8
+ICU-3,Adult,Mixed,2025-01-01,2025-01-07,168,25,159,105,22,14,18,91.2,7,5,10
+MICU,Adult,Medical,2025-01-01,2025-01-07,189,28,174,118,24,16,16,88.7,6,4,9
+SICU,Adult,Surgical,2025-01-01,2025-01-07,134,19,128,86,18,12,12,79.4,5,3,7
+CCU,Adult,Cardiac,2025-01-01,2025-01-07,98,15,92,64,12,8,8,75.3,4,3,6
